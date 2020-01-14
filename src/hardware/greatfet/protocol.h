@@ -65,6 +65,7 @@
 struct greatfet_context {
 
     uint8_t endpoint;
+	uint8_t la_endpoint;
     gboolean acquisition_active;
 
     // Transfer pool that stores asynchronous usb bulk transfers.

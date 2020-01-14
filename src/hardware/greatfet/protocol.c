@@ -52,6 +52,14 @@ struct libgreat_configure_command_payload {
 	uint8_t  num_channels;
 } __attribute__((packed));
 
+/**
+ * Struct representing the response from a configure command.
+ */
+struct libgreat_configure_command_response {
+	uint32_t sample_rate_achieved_hz;
+	uint32_t buffer_size;
+	uint8_t  endpoint;
+};
 
 /**
  * Executes a libgreat-style command.
@@ -205,7 +213,7 @@ int greatfet_prepare_transfers(const struct sr_dev_inst *device, libusb_transfer
 		libusb_fill_bulk_transfer(
 			context->transfers[i],
 			connection->devhdl,
-			context->endpoint,
+			context->la_endpoint,
 			&context->buffer[i * GREATFET_TRANSFER_BUFFER_SIZE],
 			GREATFET_TRANSFER_BUFFER_SIZE,
 			callback,
@@ -271,12 +279,13 @@ int greatfet_configure(const struct sr_dev_inst *device)
 	struct greatfet_context *context = device->priv;
 	int rc;
 
+	uint8_t response_buffer[sizeof(struct libgreat_configure_command_response)];
+
 	struct libgreat_configure_command_payload payload = {
 		.sample_rate_hz = (uint32_t)context->sample_rate,
 		.num_channels   = (uint8_t) context->num_channels,
 	};
 
-	/*printf("Configuring GreatFET for %d channels\n", payload.num_channels);*/
 	sr_spew("configuring for %d channels\n", context->num_channels);
 
 	struct libgreat_command_packet packet = {
@@ -287,7 +296,13 @@ int greatfet_configure(const struct sr_dev_inst *device)
 
 	memcpy(&packet.payload, &payload, sizeof(payload));
 
-	rc = greatfet_execute_libgreat_command(device, &packet, NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT);
+	rc = greatfet_execute_libgreat_command(device, &packet, response_buffer, sizeof(response_buffer), GREATFET_LOGIC_DEFAULT_TIMEOUT);
+
+	struct libgreat_configure_command_response response;
+	memcpy(&response, response_buffer, sizeof(struct libgreat_configure_command_response));
+	sr_spew("endpoint: %d\n", response.endpoint);
+
+	context->la_endpoint = response.endpoint;
 
 	return rc;
 }
@@ -300,11 +315,6 @@ int greatfet_start_acquire(const struct sr_dev_inst *device)
 	struct greatfet_context *context = device->priv;
 	int rc;
 
-	struct libgreat_start_command_payload payload = {
-		.sample_rate_hz = (uint32_t)context->sample_rate
-	};
-
-
 	// Configure the device to our desires FIXME:
 	rc = greatfet_configure(device);
 	if (rc < 0) {
@@ -315,9 +325,8 @@ int greatfet_start_acquire(const struct sr_dev_inst *device)
 	struct libgreat_command_packet packet = {
 		.class_number   = GREATFET_CLASS_LA,
 		.verb_number    = GREATFET_LA_VERB_START,
-		.payload_length = sizeof(payload),
+		.payload_length = 0
 	};
-	memcpy(&packet.payload, &payload, sizeof(payload));
 
 	rc = greatfet_execute_libgreat_command(device, &packet,
 		NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT);
@@ -332,6 +341,8 @@ int greatfet_start_acquire(const struct sr_dev_inst *device)
 int greatfet_stop_acquire(const struct sr_dev_inst *device)
 {
 	int rc;
+
+	sr_spew("Halting logic aquisition...\n");
 
 	struct libgreat_command_packet packet = {
 		.class_number   = GREATFET_CLASS_LA,
