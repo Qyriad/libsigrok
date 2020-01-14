@@ -54,8 +54,9 @@
 #define GREATFET_CORE_VERB_READ_SERIAL         (0x3)
 
 // Logic analyzer functions.
-#define GREATFET_LA_VERB_START                 (0x0)
-#define GREATFET_LA_VERB_STOP                  (0x1)
+#define GREATFET_LA_VERB_CONFIGURE             (0x0)
+#define GREATFET_LA_VERB_START                 (0x3)
+#define GREATFET_LA_VERB_STOP                  (0x4)
 
 
 /**
@@ -74,7 +75,7 @@ struct greatfet_context {
 
     // Configuration state.
     uint64_t sample_rate;
-    uint32_t num_channels;
+    uint32_t num_channels; // FIXME: can this be uint8_t?
 
     // Limits of the current capture.
     uint64_t samples_captured;
@@ -101,6 +102,7 @@ int greatfet_prepare_transfers(const struct sr_dev_inst *device, libusb_transfer
 int greatfet_free_transfers(struct greatfet_context *context);
 
 // High level control functions.
+int greatfet_configure(const struct sr_dev_inst *device);
 int greatfet_start_acquire(const struct sr_dev_inst *device);
 int greatfet_stop_acquire(const struct sr_dev_inst *device);
 

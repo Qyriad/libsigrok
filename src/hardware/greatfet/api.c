@@ -439,10 +439,10 @@ static int receive_data(int fd, int revents, void *cb_data)
 
 /**
  * Starts acquiring samples from the GreatFET.
- */ 
+ */
 static int dev_acquisition_start(const struct sr_dev_inst *device)
 {
-	int rc; 
+	int rc;
 	struct greatfet_context *context  = device->priv;
 	struct drv_context *driver_context = device->driver->context;
 
@@ -454,7 +454,7 @@ static int dev_acquisition_start(const struct sr_dev_inst *device)
 
 	// Let the Sigrok core know we're going to be providing data via USB.
 	// This allows it to periodically call libusb's event handler.
-	usb_source_add(device->session, driver_context->sr_ctx, 
+	usb_source_add(device->session, driver_context->sr_ctx,
 		GREATFET_LOGIC_DEFAULT_TIMEOUT, receive_data, driver_context);
 	std_session_send_df_header(device);
 

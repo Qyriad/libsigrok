@@ -45,6 +45,15 @@ struct libgreat_start_command_payload {
 
 
 /**
+ * Command block for the payload sent with a configure command.
+ */
+struct libgreat_configure_command_payload {
+	uint32_t sample_rate_hz;
+	uint8_t  num_channels;
+} __attribute__((packed));
+
+
+/**
  * Executes a libgreat-style command.
  *
  * @param device The Sigrok GreatFET capture device that will execute the relevant GreatFET command.
@@ -55,9 +64,9 @@ struct libgreat_start_command_payload {
  * @param timeout The timeout for the given command, in ms. Matches a libusb timeout.
  */
 static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
-	struct libgreat_command_packet *command, void *response_buffer, 
+	struct libgreat_command_packet *command, void *response_buffer,
 	size_t response_max_length, unsigned int timeout)
-{	
+{
 	struct sr_usb_dev_inst *connection = device->conn;
 	int rc;
 
@@ -74,9 +83,9 @@ static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
 	}
 
 	// Send the command to the device...
-	rc = libusb_control_transfer(connection->devhdl, 
+	rc = libusb_control_transfer(connection->devhdl,
 		LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_ENDPOINT,
-		GREATFET_LIBGREAT_REQUEST_NUMBER, 
+		GREATFET_LIBGREAT_REQUEST_NUMBER,
 		GREATFET_LIBGREAT_VALUE_EXECUTE,
 		flags,
 		(unsigned char *)command,
@@ -103,7 +112,7 @@ static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
 	// or an error code.
 	return libusb_control_transfer(connection->devhdl,
 		LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_ENDPOINT,
-		GREATFET_LIBGREAT_REQUEST_NUMBER, 
+		GREATFET_LIBGREAT_REQUEST_NUMBER,
 		GREATFET_LIBGREAT_VALUE_EXECUTE,
 		0,
 		(unsigned char *)response_buffer,
@@ -181,7 +190,7 @@ int greatfet_allocate_transfers(struct sr_dev_inst *device)
 
 /**
  * Prepare the USB transfer objects for an acquisition.
- */ 
+ */
 int greatfet_prepare_transfers(const struct sr_dev_inst *device, libusb_transfer_cb_fn callback)
 {
 	unsigned i;
@@ -255,8 +264,37 @@ int greatfet_free_transfers(struct greatfet_context *context)
 }
 
 /**
+ * Ask the GreatFET device to configure itself to our desires~ TODO: better docstring >.>
+ */
+int greatfet_configure(const struct sr_dev_inst *device)
+{
+	struct greatfet_context *context = device->priv;
+	int rc;
+
+	struct libgreat_configure_command_payload payload = {
+		.sample_rate_hz = (uint32_t)context->sample_rate,
+		.num_channels   = (uint8_t) context->num_channels,
+	};
+
+	/*printf("Configuring GreatFET for %d channels\n", payload.num_channels);*/
+	sr_spew("configuring for %d channels\n", context->num_channels);
+
+	struct libgreat_command_packet packet = {
+		.class_number   = GREATFET_CLASS_LA,
+		.verb_number    = GREATFET_LA_VERB_CONFIGURE,
+		.payload_length = sizeof(payload)
+	};
+
+	memcpy(&packet.payload, &payload, sizeof(payload));
+
+	rc = greatfet_execute_libgreat_command(device, &packet, NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT);
+
+	return rc;
+}
+
+/**
  * Ask the GreatFET device to start logic aquisition.
- */ 
+ */
 int greatfet_start_acquire(const struct sr_dev_inst *device)
 {
 	struct greatfet_context *context = device->priv;
@@ -266,6 +304,13 @@ int greatfet_start_acquire(const struct sr_dev_inst *device)
 		.sample_rate_hz = (uint32_t)context->sample_rate
 	};
 
+
+	// Configure the device to our desires FIXME:
+	rc = greatfet_configure(device);
+	if (rc < 0) {
+		return SR_ERR_IO;
+	}
+
 	// Build our packet.
 	struct libgreat_command_packet packet = {
 		.class_number   = GREATFET_CLASS_LA,
@@ -274,16 +319,16 @@ int greatfet_start_acquire(const struct sr_dev_inst *device)
 	};
 	memcpy(&packet.payload, &payload, sizeof(payload));
 
-	rc = greatfet_execute_libgreat_command(device, &packet, 
+	rc = greatfet_execute_libgreat_command(device, &packet,
 		NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT);
-	
+
 	return (rc < 0) ? SR_ERR_IO : SR_OK;
 }
 
 
 /**
  * Ask the GreatFET device to halt logic aquisition.
- */ 
+ */
 int greatfet_stop_acquire(const struct sr_dev_inst *device)
 {
 	int rc;
@@ -294,8 +339,8 @@ int greatfet_stop_acquire(const struct sr_dev_inst *device)
 		.payload_length = 0,
 	};
 
-	rc = greatfet_execute_libgreat_command(device, &packet, 
+	rc = greatfet_execute_libgreat_command(device, &packet,
 		NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT);
-	
+
 	return (rc < 0) ? SR_ERR_IO : SR_OK;
 }
