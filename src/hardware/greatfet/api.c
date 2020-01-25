@@ -459,7 +459,9 @@ static int dev_acquisition_start(const struct sr_dev_inst *device)
 	std_session_send_df_header(device);
 
 	rc = greatfet_start_acquire(device);
+	sr_spew("greatfet_start_acquire: %d\n", rc);
 	greatfet_prepare_transfers(device, sample_transfer_complete);
+	sr_spew("greatfet_prepare_transfers: %d\n", rc);
 
 	return rc;
 }
@@ -472,8 +474,14 @@ static int dev_acquisition_start(const struct sr_dev_inst *device)
  */
 static int dev_acquisition_stop(struct sr_dev_inst *device)
 {
+	int rc;
 	struct drv_context *driver_context = device->driver->context;
 	struct greatfet_context *context  = device->priv;
+
+	rc = greatfet_cancel_transfers(device);
+	sr_spew("cancel_transfers: %d\n", rc);
+
+	rc = greatfet_stop_acquire(device);
 
 	if (!context->acquisition_active) {
 		return SR_OK;
@@ -485,8 +493,7 @@ static int dev_acquisition_stop(struct sr_dev_inst *device)
 	std_session_send_df_end(device);
 	usb_source_remove(device->session, driver_context->sr_ctx);
 
-	greatfet_cancel_transfers(device);
-	return greatfet_stop_acquire(device);
+	return rc;
 }
 
 static struct sr_dev_driver greatfet_driver_info = {

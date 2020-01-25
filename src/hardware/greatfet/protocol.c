@@ -90,6 +90,8 @@ static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
 		flags |= GREATFET_LIBGREAT_FLAG_SKIP_RESPONSE;
 	}
 
+	sr_spew("Executing libgreat command (%02x, %02x)\n", command->class_number, command->verb_number);
+
 	// Send the command to the device...
 	rc = libusb_control_transfer(connection->devhdl,
 		LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_ENDPOINT,
@@ -107,18 +109,21 @@ static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
 			sr_err("command submission failed: libusb error %s\n", libusb_error_name(rc));
 		}
 
+		sr_spew("Returning early with %d\n", rc);
+
 		return rc;
 	}
 
 	// If we're not expecting a response from the device, we're done!
 	// Indicate we succesfully received zero bytes of response.
 	if(response_max_length == 0) {
+		sr_spew("Returning early!\n");
 		return 0;
 	}
 
 	// Read the response back from the device, and return either its length
 	// or an error code.
-	return libusb_control_transfer(connection->devhdl,
+	rc = libusb_control_transfer(connection->devhdl,
 		LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_ENDPOINT,
 		GREATFET_LIBGREAT_REQUEST_NUMBER,
 		GREATFET_LIBGREAT_VALUE_EXECUTE,
@@ -127,6 +132,10 @@ static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
 		response_max_length,
 		timeout
 	);
+
+	sr_spew("Returning %d\n", rc);
+
+	return rc;
 }
 
 static char *greatfet_read_core_string(struct sr_dev_inst *device, uint32_t verb_number)
@@ -241,15 +250,16 @@ int greatfet_prepare_transfers(const struct sr_dev_inst *device, libusb_transfer
  */
 int greatfet_cancel_transfers(struct sr_dev_inst *device)
 {
+	int rc;
 	struct greatfet_context *context = device->priv;
 	unsigned i;
 
 	for (i = 0; i < GREATFET_TRANSFER_POOL_SIZE; i++)  {
 		if (context->transfers[i]) {
-			libusb_cancel_transfer(context->transfers[i]);
+			rc = libusb_cancel_transfer(context->transfers[i]);
 		}
 	}
-	return 0;
+	return rc;
 }
 
 
@@ -340,9 +350,19 @@ int greatfet_start_acquire(const struct sr_dev_inst *device)
  */
 int greatfet_stop_acquire(const struct sr_dev_inst *device)
 {
+	struct sr_usb_dev_inst *connection = device->conn;
 	int rc;
 
 	sr_spew("Halting logic aquisition...\n");
+
+	/*rc = libusb_release_interface(connection->devhdl, GREATFET_USB_INTERFACE);*/
+	/*sr_spew("release_interface: %d\n", rc);*/
+
+	rc = libusb_claim_interface(connection->devhdl, GREATFET_USB_INTERFACE);
+	sr_spew("claim_interface: %d\n", rc);
+
+	rc = libusb_set_configuration(connection->devhdl, 1);
+	sr_spew("set_configuration: %d\n", rc);
 
 	struct libgreat_command_packet packet = {
 		.class_number   = GREATFET_CLASS_LA,
@@ -350,8 +370,16 @@ int greatfet_stop_acquire(const struct sr_dev_inst *device)
 		.payload_length = 0,
 	};
 
+	struct libgreat_command_packet packet_other = {
+		.class_number   = GREATFET_CLASS_LA,
+		.verb_number    = GREATFET_LA_VERB_START,
+		.payload_length = 0
+	};
+
 	rc = greatfet_execute_libgreat_command(device, &packet,
 		NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT);
+
+	sr_spew("greatfet_execute_libgreat_command returned %d\n", rc);
 
 	return (rc < 0) ? SR_ERR_IO : SR_OK;
 }
