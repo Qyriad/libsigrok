@@ -189,10 +189,11 @@ static int dev_open(struct sr_dev_inst *device)
     // FIXME: handle configuration / detaching kernel drivers / etc
 
 	// Claim the interface we'll be using to communicate with the GreatFET.
-	if ((ret = libusb_claim_interface(connection->devhdl, GREATFET_USB_INTERFACE)) < 0) {
-		sr_err("Failed to claim interface: %s.", libusb_error_name(ret));
-		return SR_ERR;
-	}
+	// TODO: claim for each transfer
+	/*if ((ret = libusb_claim_interface(connection->devhdl, GREATFET_USB_INTERFACE)) < 0) {*/
+		/*sr_err("Failed to claim interface: %s.", libusb_error_name(ret));*/
+		/*return SR_ERR;*/
+	/*}*/
 
 	return SR_OK;
 }
@@ -312,7 +313,7 @@ static int config_list(uint32_t key, GVariant **data,
 
 /**
  * Submits the included samples to the Sigrok core for copying/processing.
- */ 
+ */
 static void submit_samples(struct sr_dev_inst *device, uint8_t *data, size_t length)
 {
 	struct greatfet_context *context  = device->priv;
@@ -376,7 +377,7 @@ static void LIBUSB_CALL sample_transfer_complete(struct libusb_transfer *transfe
 
 	// Handle the various ways that a transfer could have ended.
 	switch (transfer->status) {
-	
+
 		// If the transfer timed out, we may have gotten some data, but not all of the data we wanted.
 		// Process the data we have, but emit a warning.
 		case LIBUSB_TRANSFER_TIMED_OUT:
@@ -399,6 +400,11 @@ static void LIBUSB_CALL sample_transfer_complete(struct libusb_transfer *transfe
 		case LIBUSB_TRANSFER_NO_DEVICE:
 			sr_err("%s(): transfer terminated due to device detach\n", __func__);
 			// Fall through to default error handler.
+
+
+		// If the transfer has been cancelled, abort.
+		case LIBUSB_TRANSFER_CANCELLED:
+			return;
 
 		default:
 			sr_err("%s(): transfer failed (%s), bailing out\n", __func__, libusb_error_name(transfer->status));
@@ -481,8 +487,6 @@ static int dev_acquisition_stop(struct sr_dev_inst *device)
 	rc = greatfet_cancel_transfers(device);
 	sr_spew("cancel_transfers: %d\n", rc);
 
-	rc = greatfet_stop_acquire(device);
-
 	if (!context->acquisition_active) {
 		return SR_OK;
 	}
@@ -492,6 +496,9 @@ static int dev_acquisition_stop(struct sr_dev_inst *device)
 
 	std_session_send_df_end(device);
 	usb_source_remove(device->session, driver_context->sr_ctx);
+	sr_spew("removed source\n");
+	rc = greatfet_stop_acquire(device);
+
 
 	return rc;
 }

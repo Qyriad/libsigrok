@@ -61,6 +61,10 @@ struct libgreat_configure_command_response {
 	uint8_t  endpoint;
 };
 
+
+static struct libusb_transfer current_transfer;
+static int transfer_is_current = 0;
+
 /**
  * Executes a libgreat-style command.
  *
@@ -71,7 +75,7 @@ struct libgreat_configure_command_response {
  *      Must be 0 if response_buffer is NULL.
  * @param timeout The timeout for the given command, in ms. Matches a libusb timeout.
  */
-static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
+static int greatfet_trigger_libgreat_command(const struct sr_dev_inst *device,
 	struct libgreat_command_packet *command, void *response_buffer,
 	size_t response_max_length, unsigned int timeout)
 {
@@ -134,6 +138,108 @@ static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
 	);
 
 	sr_spew("Returning %d\n", rc);
+
+	return rc;
+}
+
+
+static void greatfet_libusb_transfer_complete_cb(struct libusb_transfer *transfer)
+{
+	sr_spew("In transfer complete callback\n");
+	/*libusb_free_transfer(transfer);*/
+	memcpy(&current_transfer, transfer, sizeof(*transfer));
+	transfer_is_current = 1;
+}
+
+static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
+		struct libgreat_command_packet *command, void *response_buffer, size_t response_max_length, unsigned int timeout)
+{
+	struct sr_usb_dev_inst *connection = device->conn;
+	int rc;
+
+	// Communications flags, which specify e.g. optimizations in our normal communications.
+	uint16_t flags = 0;
+
+	// The command length is the payload length, plus the length of the headers.
+	uint16_t command_length = command->payload_length + (2 * sizeof(uint32_t));
+
+	// If we're not expecting any data back, we won't bother trying to read any.
+	// Notify the device not to expect us to.
+	if (response_max_length == 0) {
+		flags |= GREATFET_LIBGREAT_FLAG_SKIP_RESPONSE;
+	}
+
+	struct libusb_transfer *transfer = libusb_alloc_transfer(0);
+	unsigned char *buffer = g_malloc(LIBUSB_CONTROL_SETUP_SIZE + sizeof(*command));
+	libusb_fill_control_setup(buffer,
+		LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_ENDPOINT,
+		GREATFET_LIBGREAT_REQUEST_NUMBER,
+		GREATFET_LIBGREAT_VALUE_EXECUTE,
+		flags,
+		sizeof(*command)
+	);
+
+	memcpy(buffer + LIBUSB_CONTROL_SETUP_SIZE, command, sizeof(*command));
+
+	libusb_fill_control_transfer(transfer, connection->devhdl,
+		buffer, greatfet_libusb_transfer_complete_cb, NULL, GREATFET_LOGIC_DEFAULT_TIMEOUT);
+
+	rc = libusb_submit_transfer(transfer);
+
+	sr_spew("Waiting for transfer to complete...\n");
+
+	while (!current_transfer) {
+		libusb_handle_events_completed(NULL, NULL);
+	}
+
+	libusb_free_transfer(current_transfer);
+	current_transfer = NULL;
+	sr_spew("Transfer complete!\n");
+	g_free(buffer);
+
+	if (rc < 0) {
+		return rc;
+	}
+
+	// If we're not expecting a response from the device, we're done.
+	// Indicate we succesfully received zero bytes of response.
+	if (response_max_length == 0) {
+		sr_spew("Returning early~\n");
+		return 0;
+	}
+
+	// Read the response back from the device, and return either its length or an error code.
+	transfer = libusb_alloc_transfer(0);
+	buffer = g_malloc(LIBUSB_CONTROL_SETUP_SIZE);
+	libusb_fill_control_setup(buffer,
+		LIBUSB_ENDPOINT_IN | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_ENDPOINT,
+		GREATFET_LIBGREAT_REQUEST_NUMBER,
+		GREATFET_LIBGREAT_VALUE_EXECUTE,
+		0,
+		response_max_length
+	);
+
+	libusb_fill_control_transfer(transfer, connection->devhdl,
+		buffer, greatfet_libusb_transfer_complete_cb, NULL, GREATFET_LOGIC_DEFAULT_TIMEOUT);
+
+	rc = libusb_submit_transfer(transfer);
+
+	sr_spew("Waiting for transfer response to complete...\n");
+	while (!transfer_is_current) {
+		libusb_handle_events_completed(NULL, NULL);
+	}
+	sr_spew("Transfer response complete!\n");
+
+	if (response_buffer) {
+		sr_spew("Copying data...\n");
+		memcpy(response_buffer, current_transfer->user_data, response_max_length);
+		sr_spew("Data copy complete!\n");
+	}
+
+
+	libusb_free_transfer(current_transfer);
+	current_transfer = NULL;
+	g_free(buffer);
 
 	return rc;
 }
@@ -287,6 +393,7 @@ int greatfet_free_transfers(struct greatfet_context *context)
 int greatfet_configure(const struct sr_dev_inst *device)
 {
 	struct greatfet_context *context = device->priv;
+	struct sr_usb_dev_inst *connection = device->conn;
 	int rc;
 
 	uint8_t response_buffer[sizeof(struct libgreat_configure_command_response)];
@@ -314,6 +421,8 @@ int greatfet_configure(const struct sr_dev_inst *device)
 
 	context->la_endpoint = response.endpoint;
 
+	libusb_claim_interface(connection->devhdl, 1);
+
 	return rc;
 }
 
@@ -338,10 +447,21 @@ int greatfet_start_acquire(const struct sr_dev_inst *device)
 		.payload_length = 0
 	};
 
-	rc = greatfet_execute_libgreat_command(device, &packet,
-		NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT);
+	rc = greatfet_trigger_libgreat_command(device, &packet, NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT);
+
+	/*rc = greatfet_execute_libgreat_command(device, &packet,*/
+		/*NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT);*/
 
 	return (rc < 0) ? SR_ERR_IO : SR_OK;
+}
+
+
+/** TODO: better docstring~
+ */
+void greatfet_stop_request_complete(struct libusb_transfer *transfer)
+{
+	sr_spew("Transfer status before freeing: %d\n", transfer->status);
+	libusb_free_transfer(transfer);
 }
 
 
@@ -355,14 +475,14 @@ int greatfet_stop_acquire(const struct sr_dev_inst *device)
 
 	sr_spew("Halting logic aquisition...\n");
 
-	/*rc = libusb_release_interface(connection->devhdl, GREATFET_USB_INTERFACE);*/
-	/*sr_spew("release_interface: %d\n", rc);*/
+	rc = libusb_release_interface(connection->devhdl, 1);
+	sr_spew("release_interface: %d\n", rc);
 
-	rc = libusb_claim_interface(connection->devhdl, GREATFET_USB_INTERFACE);
-	sr_spew("claim_interface: %d\n", rc);
+	/*rc = libusb_claim_interface(connection->devhdl, GREATFET_USB_INTERFACE);*/
+	/*sr_spew("claim_interface: %d\n", rc);*/
 
-	rc = libusb_set_configuration(connection->devhdl, 1);
-	sr_spew("set_configuration: %d\n", rc);
+	/*rc = libusb_set_configuration(connection->devhdl, 1);*/
+	/*sr_spew("set_configuration: %d\n", rc);*/
 
 	struct libgreat_command_packet packet = {
 		.class_number   = GREATFET_CLASS_LA,
@@ -370,16 +490,19 @@ int greatfet_stop_acquire(const struct sr_dev_inst *device)
 		.payload_length = 0,
 	};
 
-	struct libgreat_command_packet packet_other = {
-		.class_number   = GREATFET_CLASS_LA,
-		.verb_number    = GREATFET_LA_VERB_START,
-		.payload_length = 0
-	};
+	struct libusb_transfer *transfer = libusb_alloc_transfer(0);
+	unsigned char *buffer = g_malloc(LIBUSB_CONTROL_SETUP_SIZE + sizeof(packet));
+	libusb_fill_control_setup(buffer, LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT | LIBUSB_RECIPIENT_ENDPOINT, GREATFET_LIBGREAT_REQUEST_NUMBER, GREATFET_LIBGREAT_VALUE_EXECUTE, GREATFET_LIBGREAT_FLAG_SKIP_RESPONSE, sizeof(packet));
+	memcpy(buffer + LIBUSB_CONTROL_SETUP_SIZE, &packet, sizeof(packet));
 
-	rc = greatfet_execute_libgreat_command(device, &packet,
-		NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT);
+	libusb_fill_control_transfer(transfer, connection->devhdl, buffer, greatfet_stop_request_complete, NULL, GREATFET_LOGIC_DEFAULT_TIMEOUT);
 
-	sr_spew("greatfet_execute_libgreat_command returned %d\n", rc);
+	rc = libusb_submit_transfer(transfer);
+
+	/*rc = greatfet_execute_libgreat_command(device, &packet,*/
+		/*NULL, 0, GREATFET_LOGIC_DEFAULT_TIMEOUT * 1000);*/
+
+	sr_spew("greatfet_execute_libgreat_command returned %s\n", libusb_error_name(rc));
 
 	return (rc < 0) ? SR_ERR_IO : SR_OK;
 }

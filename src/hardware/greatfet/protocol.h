@@ -33,7 +33,7 @@
 #define GREATFET_USB_INTERFACE                 (0)
 
 // Parameters of the allocated transfers.
-#define GREATFET_TRANSFER_POOL_SIZE            (32)
+#define GREATFET_TRANSFER_POOL_SIZE            (8)
 #define GREATFET_TRANSFER_BUFFER_SIZE          (262144)
 
 #define GREATFET_LOGIC_MAX_DATA_OUT            (512)
@@ -105,6 +105,7 @@ int greatfet_free_transfers(struct greatfet_context *context);
 // High level control functions.
 int greatfet_configure(const struct sr_dev_inst *device);
 int greatfet_start_acquire(const struct sr_dev_inst *device);
+void greatfet_stop_request_complete(struct libusb_transfer *transfer);
 int greatfet_stop_acquire(const struct sr_dev_inst *device);
 
 
