@@ -188,12 +188,12 @@ static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
 
 	sr_spew("Waiting for transfer to complete...\n");
 
-	while (!current_transfer) {
+	while (!transfer_is_current) {
 		libusb_handle_events_completed(NULL, NULL);
 	}
 
-	libusb_free_transfer(current_transfer);
-	current_transfer = NULL;
+	libusb_free_transfer(&current_transfer);
+	transfer_is_current = 0;
 	sr_spew("Transfer complete!\n");
 	g_free(buffer);
 
@@ -232,14 +232,11 @@ static int greatfet_execute_libgreat_command(const struct sr_dev_inst *device,
 
 	if (response_buffer) {
 		sr_spew("Copying data...\n");
-		memcpy(response_buffer, current_transfer->user_data, response_max_length);
+		memcpy(response_buffer, current_transfer.user_data, response_max_length);
 		sr_spew("Data copy complete!\n");
 	}
 
 
-	libusb_free_transfer(current_transfer);
-	current_transfer = NULL;
-	g_free(buffer);
 
 	return rc;
 }
