@@ -136,12 +136,16 @@ static GSList *scan(struct sr_dev_driver *driver, GSList *options)
 		device->version       = greatfet_get_version_number(device);
 		device->serial_num    = greatfet_get_serial_number(device);
 
+		sr_spew("Closing GreatFET USB Device.\n");
 		sr_usb_close(connection);
+		sr_spew("Device closed.\n");
 
+		sr_spew("Getting device version...\n");
 		if (!device->version) {
 			device->version =  g_strdup("(unknown version)");
 		}
 
+		sr_spew("Getting device serial number...\n");
 		// If we have a serial number, convert it to a unique connection ID.
 		if (device->serial_num) {
 			device->connection_id = g_strdup(device->serial_num);
@@ -156,6 +160,7 @@ static GSList *scan(struct sr_dev_driver *driver, GSList *options)
 		// FIXME: Read the sample endpoint from the GreatFET.
 		context->endpoint    = 0x81;
 
+		sr_spew("Setting up device channels...\n");
 		// Set up the device's channels.
 		for (i = 0; i < ARRAY_SIZE(greatfet_channel_names); ++i) {
 			const char *name = greatfet_channel_names[i];
@@ -284,7 +289,7 @@ static int config_set(uint32_t key, GVariant *data,
 	return SR_OK;
 }
 
-static int config_list(uint32_t key, GVariant **data, 
+static int config_list(uint32_t key, GVariant **data,
 	const struct sr_dev_inst *device, const struct sr_channel_group *channel_group)
 {
 
@@ -292,7 +297,7 @@ static int config_list(uint32_t key, GVariant **data,
 
 		case SR_CONF_SCAN_OPTIONS:
 		case SR_CONF_DEVICE_OPTIONS:
-			return STD_CONFIG_LIST(key, data, device, channel_group, 
+			return STD_CONFIG_LIST(key, data, device, channel_group,
 				scanopts, driver_options, device_options);
 
 		case SR_CONF_SAMPLERATE:
@@ -361,6 +366,7 @@ static gboolean transfer_should_stop(struct sr_dev_inst *device)
  */
 static void LIBUSB_CALL sample_transfer_complete(struct libusb_transfer *transfer)
 {
+	sr_spew("%s(): sample transfer complete?\n", __func__);
 	int rc;
 
 	struct sr_dev_inst *device = transfer->user_data;
@@ -392,7 +398,7 @@ static void LIBUSB_CALL sample_transfer_complete(struct libusb_transfer *transfe
 		// Handle cases where the other side has stalled the endpoint; which is used to indicate that we're not
 		// reading data fast enough from the GreatFET, and its buffer has overrun.
 		case LIBUSB_TRANSFER_STALL:
-			sr_warn("%s(): the greatfet reports overrun; this sample rate may not be meetable! (trying to continue)\n");
+			sr_warn("%s(): the greatfet reports overrun; this sample rate may not be meetable! (trying to continue)\n", __func__);
 			// TODO: do we need to clear the stall, here?
 			break;
 
@@ -485,7 +491,7 @@ static int dev_acquisition_stop(struct sr_dev_inst *device)
 	struct greatfet_context *context  = device->priv;
 
 	rc = greatfet_cancel_transfers(device);
-	sr_spew("cancel_transfers: %d\n", rc);
+	sr_spew("%s(): cancel_transfers: %s (%d)\n", __func__, libusb_error_name(rc), rc);
 
 	if (!context->acquisition_active) {
 		return SR_OK;
