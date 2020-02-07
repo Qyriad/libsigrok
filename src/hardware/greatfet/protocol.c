@@ -111,8 +111,6 @@ static int sync_async_control_transfer(libusb_device_handle *dev_handle, uint8_t
 	uint16_t wValue, uint16_t wIndex, unsigned char *data, uint16_t wLength, unsigned int timeout)
 {
 
-	/*sr_spew("%s(): wLength is %d\n", __func__, wLength);*/
-
 	if (!dev_handle) {
 		sr_err("%s(): dev_handle is null\n", __func__);
 		return LIBUSB_ERROR_INVALID_PARAM;
@@ -139,28 +137,23 @@ static int sync_async_control_transfer(libusb_device_handle *dev_handle, uint8_t
 		return LIBUSB_ERROR_NO_MEM;
 	}
 
-	/*sr_spew("%s(): filling control setup with wLength: %d...\n", __func__, wLength);*/
 	libusb_fill_control_setup(buffer, request_type, bRequest, wValue, wIndex, wLength);
 
 	// Copy the data stage data (if there is any) into the transfer buffer, after the SETUP data that was just filled
 	// in.
 	if ((request_type & 0x80) == LIBUSB_ENDPOINT_OUT) {
-		/*sr_spew("%s(): copying transmission data wLength=%d\n", __func__, wLength);*/
 		memcpy(buffer + LIBUSB_CONTROL_SETUP_SIZE, data, wLength);
 	}
 
-	/*sr_spew("%s(): filling control transfer...\n", __func__);*/
 	// Have libusb populate the transfer fields for us.
 	libusb_fill_control_transfer(transfer, dev_handle,
 		buffer, greatfet_libusb_transfer_complete_cb, &transfer_completed, timeout);
 
-	/*sr_spew("%s(): Submitting transfer...\n", __func__);*/
-
 	rc = libusb_submit_transfer(transfer);
 
-	sr_spew("%s(): transfer submitted: %s (%d)\n", __func__, libusb_error_name(rc), rc);
-
-	/*sr_spew("%s(): Waiting for transfer to complete...\n", __func__);*/
+	if (rc < 0) {
+		sr_err("%s(): failed to submit transfer: %s (%d)\n", __func__, libusb_error_name(rc), rc);
+	}
 
 	sync_transfer_wait_for_completion(transfer);
 
@@ -440,6 +433,7 @@ int greatfet_configure(const struct sr_dev_inst *device)
 
 	context->la_endpoint = response.endpoint;
 	context->endpoint = response.endpoint;
+	sr_spew("QYRIAD: endpoint / la endpoint: %02x\n", response.endpoint);
 
 	libusb_claim_interface(connection->devhdl, 1);
 
